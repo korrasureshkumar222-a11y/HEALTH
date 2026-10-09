@@ -1,0 +1,162 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  unit:
+    name: Lint, unit tests, and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            client/package-lock.json
+            server/package-lock.json
+      - run: npm ci
+        working-directory: server
+      - run: npm run lint
+        working-directory: server
+      - run: npm run test:coverage -- --coverageReporters=text-summary
+        working-directory: server
+      - run: npm ci
+        working-directory: client
+      - run: npm run lint
+        working-directory: client
+      - run: npm run test:coverage
+        working-directory: client
+      - run: npm run build
+        working-directory: client
+      - run: npm run translations:check
+        working-directory: client
+
+  e2e:
+    name: Browser workflows
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      MONGO_URI: mongodb://127.0.0.1:27017/chronic_care_e2e
+      SEED_PASSWORD: E2E-Only-Seed-Password-2026!
+      JWT_ACCESS_SECRET: E2E-only-access-secret-32-characters-long
+      JWT_REFRESH_SECRET: E2E-only-refresh-secret-32-characters-long
+      PII_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      CORS_ORIGIN: http://127.0.0.1:4173
+      VITE_API_BASE_URL: http://127.0.0.1:5000/api
+      COOKIE_SECURE: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            client/package-lock.json
+            server/package-lock.json
+      - run: npm ci
+        working-directory: server
+      - run: npm ci
+        working-directory: client
+      - run: npm run build
+        working-directory: client
+      - run: npx playwright install --with-deps chromium
+        working-directory: client
+      - run: npm run test:e2e
+        working-directory: client
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: client/test-results/
+          if-no-files-found: ignore
+
+  publish:
+    name: Build and publish production images
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: [unit, e2e]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Normalize image namespace
+        id: image
+        run: echo "namespace=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./server
+          file: ./server/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.image.outputs.namespace }}-server:${{ github.sha }}
+            ${{ steps.image.outputs.namespace }}-server:latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./client
+          file: ./client/Dockerfile
+          push: true
+          build-args: |
+            VITE_API_BASE_URL=/api
+            VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}
+          tags: |
+            ${{ steps.image.outputs.namespace }}-client:${{ github.sha }}
+            ${{ steps.image.outputs.namespace }}-client:latest
+
+  deploy-ec2:
+    name: Deploy images to EC2
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_TARGET == 'ec2'
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+      - name: Trust deployment host
+        env:
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          test -n "$KNOWN_HOSTS"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+      - name: Pull and restart the pinned release
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+          test -n "$DEPLOY_PATH"
+          IMAGE_NAMESPACE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_PATH' && SERVER_IMAGE='$IMAGE_NAMESPACE-server' CLIENT_IMAGE='$IMAGE_NAMESPACE-client' IMAGE_TAG='$IMAGE_TAG' docker compose -f docker-compose.production.yml pull && SERVER_IMAGE='$IMAGE_NAMESPACE-server' CLIENT_IMAGE='$IMAGE_NAMESPACE-client' IMAGE_TAG='$IMAGE_TAG' docker compose -f docker-compose.production.yml up -d --remove-orphans"
+      - name: Verify public health endpoint
+        env:
+          PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+        run: |
+          test -n "$PUBLIC_BASE_URL"
+          curl --fail --show-error --retry 10 --retry-delay 5 --retry-all-errors "$PUBLIC_BASE_URL/api/health"
