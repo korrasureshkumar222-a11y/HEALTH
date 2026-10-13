@@ -61,6 +61,10 @@ function readingsFor(patient, patientIndex, userId, now) {
         type: 'weight',
         values: { value: 58 + patientIndex * 3 + week * 0.2, unit: 'kg' },
       },
+      {
+        type: 'spo2',
+        values: { value: 96 + (offset % 3), unit: '%' },
+      },
     ]
 
     if (patient.conditions.includes('diabetes')) {

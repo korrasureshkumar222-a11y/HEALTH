@@ -60,7 +60,16 @@ async function seed() {
   const doctorUsers = await Promise.all([
     upsertUser({ name: 'Dr. Anitha Rao', phone: '9000000002', email: 'doctor1@chronic-care.invalid', role: 'doctor' }),
     upsertUser({ name: 'Dr. Ravi Kumar', phone: '9000000003', email: 'doctor2@chronic-care.invalid', role: 'doctor' }),
+    upsertUser({ name: 'Dr. Ramya Varada', phone: '9000000011', email: 'doctor3@chronic-care.invalid', role: 'doctor' }),
+    upsertUser({ name: 'Dr. Nanda Kishore Panigrahi', phone: '9000000012', email: 'doctor4@chronic-care.invalid', role: 'doctor' }),
+    upsertUser({ name: 'Dr. T. Anusha', phone: '9000000013', email: 'doctor5@chronic-care.invalid', role: 'doctor' }),
   ])
+  const demoAvailability = Array.from({ length: 7 }, (_unused, dayOfWeek) => ({
+    dayOfWeek,
+    startTime: '09:00',
+    endTime: '17:00',
+    timezone: 'Asia/Kolkata',
+  }))
   const doctors = await Promise.all([
     upsertProfile(Doctor, doctorUsers[0], {
       specialization: 'General Medicine',
@@ -74,6 +83,13 @@ async function seed() {
       hospital: 'Demo Government Hospital, Vijayawada',
       isVerified: true,
     }),
+    ...doctorUsers.slice(2).map((user, index) => upsertProfile(Doctor, user, {
+      specialization: ['General Medicine', 'Cardiology', 'General Medicine'][index],
+      registrationNo: `DEMO-AP-DOC-00${index + 3}`,
+      hospital: 'Demo Care Centre, Andhra Pradesh',
+      availability: demoAvailability,
+      isVerified: true,
+    })),
   ])
 
   const chwUsers = await Promise.all([

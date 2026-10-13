@@ -65,7 +65,7 @@ export default function HomePage() {
         </nav>
       </header>
 
-      <section className="relative isolate">
+      <section className="home-hero relative isolate overflow-hidden">
         <div className="pointer-events-none absolute -right-32 -top-36 -z-10 size-[30rem] rounded-full bg-blue-100/70 blur-3xl" aria-hidden="true" />
         <div className="mx-auto grid max-w-7xl items-center gap-12 px-4 py-14 sm:px-6 sm:py-20 lg:grid-cols-[1.1fr_0.9fr] lg:gap-16 lg:px-8 lg:py-24">
           <div>

@@ -33,3 +33,24 @@ select {
 #root {
   min-height: 100vh;
 }
+
+.home-hero::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: linear-gradient(125deg, #f8fafc 0%, #eff6ff 38%, #ecfeff 68%, #f0fdf4 100%);
+  background-size: 240% 240%;
+  animation: home-background-shift 20s ease-in-out infinite alternate;
+  content: "";
+}
+
+@keyframes home-background-shift {
+  0% { background-position: 0% 45%; }
+  100% { background-position: 100% 55%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-hero::before {
+    animation: none;
+  }
+}
